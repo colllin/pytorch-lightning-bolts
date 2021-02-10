@@ -1,4 +1,5 @@
 """
+Source: https://github.com/colllin/pytorch-lightning-bolts/blob/patch-1/pl_bolts/models/self_supervised/swav/swav_module.py
 Adapted from official swav implementation: https://github.com/facebookresearch/swav
 """
 import math
@@ -28,9 +29,9 @@ class SwAV(pl.LightningModule):
 
     def __init__(
         self,
+        datamodule,
         gpus: int,
         num_samples: int,
-        batch_size: int,
         dataset: str,
         num_nodes: int = 1,
         arch: str = 'resnet50',
@@ -65,7 +66,6 @@ class SwAV(pl.LightningModule):
                 to manage the queue and select distributed sinkhorn
             num_nodes: number of nodes to train on
             num_samples: number of image samples used for training
-            batch_size: batch size per GPU in ddp
             dataset: dataset being used for train/val
             arch: encoder architecture used for pre-training
             hidden_mlp: hidden layer of non-linear projection head, set to 0
@@ -134,23 +134,6 @@ class SwAV(pl.LightningModule):
 
         self.model = self.init_model()
 
-        # compute iters per epoch
-        global_batch_size = self.hparams.num_nodes * self.hparams.gpus * self.hparams.batch_size if self.hparams.gpus > 0 else self.hparams.batch_size
-        self.train_iters_per_epoch = self.hparams.num_samples // global_batch_size
-
-        # define LR schedule
-        warmup_lr_schedule = np.linspace(
-            self.start_lr, self.hparams.learning_rate, self.train_iters_per_epoch * self.warmup_epochs
-        )
-        iters = np.arange(self.train_iters_per_epoch * (self.max_epochs - self.warmup_epochs))
-        cosine_lr_schedule = np.array([
-            self.final_lr + 0.5 * (self.hparams.learning_rate - self.final_lr) *
-            (1 + math.cos(math.pi * t / (self.train_iters_per_epoch * (self.max_epochs - self.warmup_epochs))))
-            for t in iters
-        ])
-
-        self.lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
-
         self.queue = None
         self.softmax = nn.Softmax(dim=1)
 
@@ -164,6 +147,24 @@ class SwAV(pl.LightningModule):
 
             if os.path.isfile(self.queue_path):
                 self.queue = torch.load(self.queue_path)["queue"]
+                
+    def on_before_fit(self):
+        assert False, len(self.trainer.datamodule.train_dataloader)
+        self.init_lr_schedule()
+                
+    def init_lr_schedule(self):
+        # define LR schedule
+        warmup_lr_schedule = np.linspace(
+            self.start_lr, self.hparams.learning_rate, self.trainer.num_training_batches * self.warmup_epochs
+        )
+        iters = np.arange(self.trainer.num_training_batches * (self.max_epochs - self.warmup_epochs))
+        cosine_lr_schedule = np.array([
+            self.final_lr + 0.5 * (self.hparams.learning_rate - self.final_lr) *
+            (1 + math.cos(math.pi * t / (self.trainer.num_training_batches * (self.max_epochs - self.warmup_epochs))))
+            for t in iters
+        ])
+
+        self.lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
 
     def init_model(self):
         if self.hparams.arch == 'resnet18':
@@ -597,3 +598,4 @@ def cli_main():
 
 if __name__ == '__main__':
     cli_main()
+    
