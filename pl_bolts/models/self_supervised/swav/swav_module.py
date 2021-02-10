@@ -101,7 +101,6 @@ class SwAV(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.hidden_mlp = hidden_mlp
         self.feat_dim = feat_dim
         self.nmb_prototypes = nmb_prototypes
         self.freeze_prototypes_epochs = freeze_prototypes_epochs
@@ -175,7 +174,7 @@ class SwAV(pl.LightningModule):
 
         return backbone(
             normalize=True,
-            hidden_mlp=self.hidden_mlp,
+            hidden_mlp=self.hparams.hidden_mlp,
             output_dim=self.feat_dim,
             nmb_prototypes=self.nmb_prototypes,
             first_conv=self.first_conv,
