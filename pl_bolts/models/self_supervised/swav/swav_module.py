@@ -101,8 +101,6 @@ class SwAV(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.dataset = dataset
-
         self.hidden_mlp = hidden_mlp
         self.feat_dim = feat_dim
         self.nmb_prototypes = nmb_prototypes
@@ -213,7 +211,7 @@ class SwAV(pl.LightningModule):
                     p.grad = None
 
     def shared_step(self, batch):
-        if self.dataset == 'stl10':
+        if self.hparams.dataset == 'stl10':
             unlabeled_batch = batch[0]
             batch = unlabeled_batch
 
