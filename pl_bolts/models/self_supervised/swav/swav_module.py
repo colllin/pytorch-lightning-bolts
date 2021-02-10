@@ -101,7 +101,6 @@ class SwAV(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.arch = arch
         self.dataset = dataset
 
         self.hidden_mlp = hidden_mlp
@@ -171,9 +170,9 @@ class SwAV(pl.LightningModule):
                 self.queue = torch.load(self.queue_path)["queue"]
 
     def init_model(self):
-        if self.arch == 'resnet18':
+        if self.hparams.arch == 'resnet18':
             backbone = resnet18
-        elif self.arch == 'resnet50':
+        elif self.hparams.arch == 'resnet50':
             backbone = resnet50
 
         return backbone(
