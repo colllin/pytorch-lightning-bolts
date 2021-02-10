@@ -104,7 +104,6 @@ class SwAV(pl.LightningModule):
         self.num_nodes = num_nodes
         self.arch = arch
         self.dataset = dataset
-        self.num_samples = num_samples
 
         self.hidden_mlp = hidden_mlp
         self.feat_dim = feat_dim
@@ -143,7 +142,7 @@ class SwAV(pl.LightningModule):
 
         # compute iters per epoch
         global_batch_size = self.num_nodes * self.hparams.gpus * self.hparams.batch_size if self.hparams.gpus > 0 else self.hparams.batch_size
-        self.train_iters_per_epoch = self.num_samples // global_batch_size
+        self.train_iters_per_epoch = self.hparams.num_samples // global_batch_size
 
         # define LR schedule
         warmup_lr_schedule = np.linspace(
