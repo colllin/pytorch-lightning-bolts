@@ -1,5 +1,4 @@
 """
-Source: https://github.com/colllin/pytorch-lightning-bolts/blob/patch-1/pl_bolts/models/self_supervised/swav/swav_module.py
 Adapted from official swav implementation: https://github.com/facebookresearch/swav
 """
 import math
@@ -29,7 +28,6 @@ class SwAV(pl.LightningModule):
 
     def __init__(
         self,
-        datamodule,
         gpus: int,
         num_samples: int,
         dataset: str,
