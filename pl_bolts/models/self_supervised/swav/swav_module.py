@@ -101,7 +101,6 @@ class SwAV(pl.LightningModule):
         super().__init__()
         self.save_hyperparameters()
 
-        self.num_nodes = num_nodes
         self.arch = arch
         self.dataset = dataset
 
@@ -133,7 +132,7 @@ class SwAV(pl.LightningModule):
         self.warmup_epochs = warmup_epochs
         self.max_epochs = max_epochs
 
-        if self.hparams.gpus * self.num_nodes > 1:
+        if self.hparams.gpus * self.hparams.num_nodes > 1:
             self.get_assignments = self.distributed_sinkhorn
         else:
             self.get_assignments = self.sinkhorn
@@ -141,7 +140,7 @@ class SwAV(pl.LightningModule):
         self.model = self.init_model()
 
         # compute iters per epoch
-        global_batch_size = self.num_nodes * self.hparams.gpus * self.hparams.batch_size if self.hparams.gpus > 0 else self.hparams.batch_size
+        global_batch_size = self.hparams.num_nodes * self.hparams.gpus * self.hparams.batch_size if self.hparams.gpus > 0 else self.hparams.batch_size
         self.train_iters_per_epoch = self.hparams.num_samples // global_batch_size
 
         # define LR schedule
