@@ -124,7 +124,6 @@ class SwAV(pl.LightningModule):
 
         self.start_lr = start_lr
         self.final_lr = final_lr
-        self.learning_rate = learning_rate
         self.warmup_epochs = warmup_epochs
         self.max_epochs = max_epochs
 
@@ -141,11 +140,11 @@ class SwAV(pl.LightningModule):
 
         # define LR schedule
         warmup_lr_schedule = np.linspace(
-            self.start_lr, self.learning_rate, self.train_iters_per_epoch * self.warmup_epochs
+            self.start_lr, self.hparams.learning_rate, self.train_iters_per_epoch * self.warmup_epochs
         )
         iters = np.arange(self.train_iters_per_epoch * (self.max_epochs - self.warmup_epochs))
         cosine_lr_schedule = np.array([
-            self.final_lr + 0.5 * (self.learning_rate - self.final_lr) *
+            self.final_lr + 0.5 * (self.hparams.learning_rate - self.final_lr) *
             (1 + math.cos(math.pi * t / (self.train_iters_per_epoch * (self.max_epochs - self.warmup_epochs))))
             for t in iters
         ])
@@ -293,9 +292,9 @@ class SwAV(pl.LightningModule):
             params = self.parameters()
 
         if self.optim == 'sgd':
-            optimizer = torch.optim.SGD(params, lr=self.learning_rate, momentum=0.9, weight_decay=self.weight_decay)
+            optimizer = torch.optim.SGD(params, lr=self.hparams.learning_rate, momentum=0.9, weight_decay=self.weight_decay)
         elif self.optim == 'adam':
-            optimizer = torch.optim.Adam(params, lr=self.learning_rate, weight_decay=self.weight_decay)
+            optimizer = torch.optim.Adam(params, lr=self.hparams.learning_rate, weight_decay=self.weight_decay)
 
         if self.lars_wrapper:
             optimizer = LARSWrapper(
