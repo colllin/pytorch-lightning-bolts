@@ -145,24 +145,6 @@ class SwAV(pl.LightningModule):
 
             if os.path.isfile(self.queue_path):
                 self.queue = torch.load(self.queue_path)["queue"]
-                
-    def on_before_fit(self):
-        assert False, len(self.trainer.datamodule.train_dataloader)
-        self.init_lr_schedule()
-                
-    def init_lr_schedule(self):
-        # define LR schedule
-        warmup_lr_schedule = np.linspace(
-            self.start_lr, self.hparams.learning_rate, self.trainer.num_training_batches * self.warmup_epochs
-        )
-        iters = np.arange(self.trainer.num_training_batches * (self.max_epochs - self.warmup_epochs))
-        cosine_lr_schedule = np.array([
-            self.final_lr + 0.5 * (self.hparams.learning_rate - self.final_lr) *
-            (1 + math.cos(math.pi * t / (self.trainer.num_training_batches * (self.max_epochs - self.warmup_epochs))))
-            for t in iters
-        ])
-
-        self.lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
 
     def init_model(self):
         if self.hparams.arch == 'resnet18':
@@ -179,11 +161,27 @@ class SwAV(pl.LightningModule):
             maxpool1=self.maxpool1
         )
 
+    def init_lr_schedule(self):
+        # define LR schedule
+        warmup_lr_schedule = np.linspace(
+            self.start_lr, self.hparams.learning_rate, self.trainer.num_training_batches * self.warmup_epochs
+        )
+        iters = np.arange(self.trainer.num_training_batches * (self.max_epochs - self.warmup_epochs))
+        cosine_lr_schedule = np.array([
+            self.final_lr + 0.5 * (self.hparams.learning_rate - self.final_lr) *
+            (1 + math.cos(math.pi * t / (self.trainer.num_training_batches * (self.max_epochs - self.warmup_epochs))))
+            for t in iters
+        ])
+
+        self.lr_schedule = np.concatenate((warmup_lr_schedule, cosine_lr_schedule))
+
     def forward(self, x):
         # pass single batch from the resnet backbone
         return self.model.forward_backbone(x)
 
     def on_train_epoch_start(self):
+        self.init_lr_schedule() # Relies on self.trainer.num_training_batches being up-to-date.
+
         if self.queue_length > 0:
             if self.trainer.current_epoch >= self.epoch_queue_starts and self.queue is None:
                 self.queue = torch.zeros(
@@ -249,6 +247,7 @@ class SwAV(pl.LightningModule):
             subloss = 0
             for v in np.delete(np.arange(np.sum(self.nmb_crops)), crop_id):
                 p = self.softmax(output[bs * v:bs * (v + 1)] / self.temperature)
+                assert q.shape[0] == p.shape[0], 'Must set the same value for `nmb_crops` to both the datamodule transforms and the swav lightning module hparams.'
                 subloss -= torch.mean(torch.sum(q * torch.log(p), dim=1))
             loss += subloss / (np.sum(self.nmb_crops) - 1)
         loss /= len(self.crops_for_assign)
