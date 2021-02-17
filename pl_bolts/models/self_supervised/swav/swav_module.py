@@ -11,7 +11,6 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.core.optimizer import LightningOptimizer
-from torch import distributed as dist
 from torch import nn
 from torch.optim.optimizer import Optimizer
 
@@ -28,7 +27,7 @@ class SwAV(pl.LightningModule):
 
     def __init__(
         self,
-        gpus: int,
+#         gpus: int,
         num_samples: int,
         dataset: str,
         num_nodes: int = 1,
@@ -60,7 +59,7 @@ class SwAV(pl.LightningModule):
     ):
         """
         Args:
-            gpus: number of gpus per node used in training, passed to SwAV module
+            [deprecated] gpus: number of gpus per node used in training, passed to SwAV module
                 to manage the queue and select distributed sinkhorn
             num_nodes: number of nodes to train on
             num_samples: number of image samples used for training
@@ -125,10 +124,10 @@ class SwAV(pl.LightningModule):
         self.warmup_epochs = warmup_epochs
         self.max_epochs = max_epochs
 
-        if self.hparams.gpus * self.hparams.num_nodes > 1:
-            self.get_assignments = self.distributed_sinkhorn
-        else:
-            self.get_assignments = self.sinkhorn
+#         if torch.distributed.is_initialized():
+        self.get_assignments = self.distributed_sinkhorn
+#         else:
+#             self.get_assignments = self.sinkhorn
 
         self.model = self.init_model()
 
@@ -183,15 +182,13 @@ class SwAV(pl.LightningModule):
         self.init_lr_schedule() # Relies on self.trainer.num_training_batches being up-to-date.
 
         if self.queue_length > 0:
+            num_devices = len(self.trainer.gpus) * self.num_nodes
             if self.trainer.current_epoch >= self.epoch_queue_starts and self.queue is None:
                 self.queue = torch.zeros(
                     len(self.crops_for_assign),
-                    self.queue_length // self.hparams.gpus,  # change to nodes * gpus once multi-node
+                    self.queue_length // num_devices,
                     self.feat_dim,
                 )
-
-                if self.hparams.gpus > 0:
-                    self.queue = self.queue.cuda()
 
         self.use_the_queue = False
 
@@ -232,6 +229,7 @@ class SwAV(pl.LightningModule):
 
                 # 4. time to use the queue
                 if self.queue is not None:
+                    self.queue = self.queue.to(out)
                     if self.use_the_queue or not torch.all(self.queue[i, -1, :] == 0):
                         self.use_the_queue = True
                         out = torch.cat((torch.mm(self.queue[i], self.model.prototypes.weight.t()), out))
@@ -325,54 +323,49 @@ class SwAV(pl.LightningModule):
             optimizer = LightningOptimizer.to_lightning_optimizer(optimizer, self.trainer)
         optimizer.step(closure=optimizer_closure)
 
-    def sinkhorn(self, Q, nmb_iters):
-        with torch.no_grad():
-            sum_Q = torch.sum(Q)
-            Q /= sum_Q
+#     def sinkhorn(self, Q, nmb_iters):
+#         with torch.no_grad():
+#             sum_Q = torch.sum(Q)
+#             Q /= sum_Q
 
-            K, B = Q.shape
+#             K, B = Q.shape
 
-            if self.hparams.gpus > 0:
-                u = torch.zeros(K).cuda()
-                r = torch.ones(K).cuda() / K
-                c = torch.ones(B).cuda() / B
-            else:
-                u = torch.zeros(K)
-                r = torch.ones(K) / K
-                c = torch.ones(B) / B
+# #             u = torch.zeros(K).to(Q)
+#             r = torch.ones(K).to(Q) / K
+#             c = torch.ones(B).to(Q) / B
 
-            for _ in range(nmb_iters):
-                u = torch.sum(Q, dim=1)
+#             for _ in range(nmb_iters):
+#                 u = torch.sum(Q, dim=1)
 
-                Q *= (r / u).unsqueeze(1)
-                Q *= (c / torch.sum(Q, dim=0)).unsqueeze(0)
+#                 Q *= (r / u).unsqueeze(1)
+#                 Q *= (c / torch.sum(Q, dim=0)).unsqueeze(0)
 
-            return (Q / torch.sum(Q, dim=0, keepdim=True)).t().float()
+#             return (Q / torch.sum(Q, dim=0, keepdim=True)).t().float()
 
     def distributed_sinkhorn(self, Q, nmb_iters):
         with torch.no_grad():
             sum_Q = torch.sum(Q)
-            dist.all_reduce(sum_Q)
+            if torch.distributed.is_initialized():
+                torch.distributed.all_reduce(sum_Q)
             Q /= sum_Q
 
-            if self.hparams.gpus > 0:
-                u = torch.zeros(Q.shape[0]).cuda(non_blocking=True)
-                r = torch.ones(Q.shape[0]).cuda(non_blocking=True) / Q.shape[0]
-                c = torch.ones(Q.shape[1]).cuda(non_blocking=True) / (self.hparams.gpus * Q.shape[1])
-            else:
-                u = torch.zeros(Q.shape[0])
-                r = torch.ones(Q.shape[0]) / Q.shape[0]
-                c = torch.ones(Q.shape[1]) / (self.hparams.gpus * Q.shape[1])
+            K, B = Q.shape
+            num_procs = 1
+            if torch.distributed.is_initialized():
+                num_procs = torch.distributed.get_world_size()
 
-            curr_sum = torch.sum(Q, dim=1)
-            dist.all_reduce(curr_sum)
+#             u = torch.zeros(K).to(Q)
+            r = torch.ones(K).to(Q) / K
+            c = torch.ones(B).to(Q) / (num_procs * B)
 
             for it in range(nmb_iters):
-                u = curr_sum
+                u = torch.sum(Q, dim=1)
+                if torch.distributed.is_initialized():
+                    torch.distributed.all_reduce(u)
                 Q *= (r / u).unsqueeze(1)
                 Q *= (c / torch.sum(Q, dim=0)).unsqueeze(0)
-                curr_sum = torch.sum(Q, dim=1)
-                dist.all_reduce(curr_sum)
+                
+            # FIXME Do we need to all_reduce torch.sum(Q) again here?
             return (Q / torch.sum(Q, dim=0, keepdim=True)).t().float()
 
     @staticmethod
@@ -420,7 +413,7 @@ class SwAV(pl.LightningModule):
         # training params
         parser.add_argument("--fast_dev_run", default=1, type=int)
         parser.add_argument("--num_nodes", default=1, type=int, help="number of nodes for training")
-        parser.add_argument("--gpus", default=1, type=int, help="number of gpus to train on")
+        parser.add_argument("--gpus", default=-1, type=int, help="number of gpus to train on")
         parser.add_argument("--num_workers", default=8, type=int, help="num of workers per GPU")
         parser.add_argument("--optimizer", default="adam", type=str, help="choose between adam/sgd")
         parser.add_argument("--lars_wrapper", action='store_true', help="apple lars wrapper over optimizer used")
@@ -583,8 +576,7 @@ def cli_main():
         max_steps=None if args.max_steps == -1 else args.max_steps,
         gpus=args.gpus,
         num_nodes=args.num_nodes,
-        distributed_backend='ddp' if args.gpus > 1 else None,
-        sync_batchnorm=True if args.gpus > 1 else False,
+        sync_batchnorm=True,
         precision=32 if args.fp32 else 16,
         callbacks=callbacks,
         fast_dev_run=args.fast_dev_run
